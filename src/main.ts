@@ -1256,8 +1256,15 @@ function update() {
         UI.gameOverMenu.style.backdropFilter = 'blur(10px)';
         isPlaying = false; // Stop game loop logic
         
+        const host = window.location.hostname || 'localhost';
+        let nextUrl = `https://vibej.am/portal/2026?ref=https://${host}&speed=${Math.floor(throttle)}&username=glider`;
+        
+        if (p.userData.isReturn && p.userData.refUrl) {
+            nextUrl = p.userData.refUrl + `?portal=true&ref=https://${host}&speed=${Math.floor(throttle)}`;
+        }
+        
         setTimeout(() => {
-            window.location.href = 'https://vibej.am/2026/next';
+            window.location.href = nextUrl;
         }, 1500);
         
         p.position.set(9999,9999,9999); // remove so it doesn't trigger again
@@ -1344,7 +1351,10 @@ function update() {
 
 // ---- Flow Control ----
 function startGame() {
-  document.body.requestPointerLock();
+  try {
+    document.body.requestPointerLock();
+  } catch(e) {}
+  
   isPlaying = true;
   isDead = false;
   UI.startMenu.classList.add('hidden');
@@ -1362,14 +1372,40 @@ function die() {
   UI.finalStats.innerText = `You reached Level ${level} with ${Math.floor(xp)} XP.`;
 }
 
+// Init
 UI.startBtn.addEventListener('click', startGame);
 UI.respawnBtn.addEventListener('click', () => {
+  UI.gameOverMenu.classList.add('hidden');
   camera.position.set((Math.random()-0.5)*50, (Math.random()-0.5)*50, (Math.random()-0.5)*50);
   pitch = 0; yaw = 0; roll = 0; throttle = 0;
   level = 1; xp = 0; xpNeeded = 100; maxHealth = 100; health = 100; dmgMult = 1.0; fireRateMult = 1.0;
   updateXPUI(); updateHealthUI();
   startGame();
 });
+
+// Vibe Jam 2026 Portal Entry Logic
+const urlParams = new URLSearchParams(window.location.search);
+const fromPortal = urlParams.get('portal') === 'true';
+
+if (fromPortal) {
+    setTimeout(() => {
+        startGame();
+        throttle = parseFloat(urlParams.get('speed') || '50');
+        
+        // Add Return Portal
+        const returnRef = urlParams.get('ref');
+        if (returnRef) {
+            const returnGeo = new THREE.TorusGeometry(8, 0.8, 8, 24);
+            const returnMat = new THREE.MeshBasicMaterial({ color: 0x00ffff, wireframe: true });
+            const returnPortal = new THREE.Mesh(returnGeo, returnMat);
+            returnPortal.position.set(0, 0, 100); // directly behind player
+            returnPortal.userData.isReturn = true;
+            returnPortal.userData.refUrl = returnRef;
+            scene.add(returnPortal);
+            portals.push(returnPortal);
+        }
+    }, 100);
+}
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
