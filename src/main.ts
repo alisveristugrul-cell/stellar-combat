@@ -1,8 +1,5 @@
 import * as THREE from 'three';
-import { io } from 'socket.io-client';
 
-const socketUrl = window.location.hostname === 'localhost' ? 'http://localhost:3001' : '/';
-const socket = io(socketUrl);
 
 // ---- SOUND SYSTEM (Web Audio API - Procedural) ----
 const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -174,13 +171,27 @@ function playLevelUpSound() {
   });
 }
 
+function playPortalSound() {
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.type = 'sine';
+  const now = audioCtx.currentTime;
+  osc.frequency.setValueAtTime(400, now);
+  osc.frequency.exponentialRampToValueAtTime(1200, now + 0.5);
+  gain.gain.setValueAtTime(0, now);
+  gain.gain.linearRampToValueAtTime(0.3, now + 0.1);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+  osc.start(now); osc.stop(now + 0.5);
+}
+
 // Resume AudioContext on first user interaction
 document.addEventListener('click', () => { if (audioCtx.state === 'suspended') audioCtx.resume(); }, { once: true });
 
 // ---- Game State ----
 let isPlaying = false;
 let isDead = false;
-let myId = '';
 const otherPlayers: Record<string, THREE.Group> = {};
 const npcs: Record<string, THREE.Group> = {};
 
@@ -476,6 +487,18 @@ for(let i=0; i<15; i++) {
   asteroids.push(rock);
 }
 
+// Portals (Vibe Jam 2026 required element)
+const portals: THREE.Mesh[] = [];
+for(let i=0; i<20; i++) {
+  const geo = new THREE.TorusGeometry(15, 1.5, 16, 100);
+  const mat = new THREE.MeshStandardMaterial({ color: 0xff00ff, emissive: 0xff00ff, emissiveIntensity: 0.8, transparent: true, opacity: 0.8 });
+  const portal = new THREE.Mesh(geo, mat);
+  portal.position.set((Math.random()-0.5)*800, (Math.random()-0.5)*400, (Math.random()-0.5)*800);
+  portal.lookAt(0, 0, 0);
+  scene.add(portal);
+  portals.push(portal);
+}
+
 // ---- 3D Cockpit ----
 const cockpitGroup = new THREE.Group();
 camera.add(cockpitGroup);
@@ -690,102 +713,27 @@ function createShipModel(isNPC: boolean) {
   return group;
 }
 
-// ---- Networking Logic ----
-socket.on('init', (data) => {
-  myId = data.id;
-  const state = data.players[myId];
-  if(state) {
-    camera.position.set(state.x, state.y, state.z);
-    updateHealthUI();
-  }
-  
-  for(let id in data.players) {
-    if(id !== myId && !data.players[id].isDead) addEntity(otherPlayers, id, data.players[id], false);
-  }
-  for(let id in data.npcs) {
-    if(!data.npcs[id].isDead) addEntity(npcs, id, data.npcs[id], true);
-  }
-});
+// ---- Local NPC Logic ----
+let npcSpawnTimer = 0;
 
-socket.on('playerJoined', (data) => {
-  if(data.id !== myId) addEntity(otherPlayers, data.id, data.state, false);
-});
+function spawnLocalNPC() {
+  const id = 'npc_' + Math.floor(Math.random() * 1000000);
+  const npc = {
+    x: camera.position.x + (Math.random() - 0.5) * 500,
+    y: camera.position.y + (Math.random() - 0.5) * 200,
+    z: camera.position.z + (Math.random() - 0.5) * 500,
+    qx: 0, qy: 0, qz: 0, qw: 1,
+    health: 100,
+    isDead: false,
+    speed: 15 + Math.random() * 20
+  };
+  addEntity(npcs, id, npc, true);
+  npcs[id].userData.health = npc.health;
+  npcs[id].userData.speed = npc.speed;
+}
 
-socket.on('playerMoved', (data) => {
-  updateEntity(otherPlayers, data.id, data.state);
-});
-
-socket.on('playerLeft', (id) => {
-  if(otherPlayers[id]) { scene.remove(otherPlayers[id]); delete otherPlayers[id]; }
-});
-
-socket.on('npcSpawned', (npc) => {
-  addEntity(npcs, npc.id, npc, true);
-});
-
-socket.on('npcUpdate', (npcData) => {
-  for(let id in npcData) {
-    if(npcs[id]) updateEntity(npcs, id, npcData[id]);
-  }
-});
-
-socket.on('laserFired', (data) => {
-  createLaser(
-    new THREE.Vector3(data.posX, data.posY, data.posZ),
-    new THREE.Vector3(data.dirX, data.dirY, data.dirZ),
-    data.color || 0xff0000,
-    500
-  );
-  playEnemyLaserSound();
-});
-
-socket.on('playerDamaged', (data) => {
-  if(data.id === myId) {
-    health = data.health;
-    updateHealthUI();
-    playDamageSound();
-    cameraShakeIntensity = Math.max(cameraShakeIntensity, 0.03);
-    document.body.style.backgroundColor = '#ff0000';
-    setTimeout(() => document.body.style.backgroundColor = '#000', 100);
-  }
-});
-
-socket.on('playerDied', (data) => {
-  if(data.id === myId) {
-    playDeathSound();
-    die();
-  } else if(otherPlayers[data.id]) {
-    createExplosion(otherPlayers[data.id].position);
-    playExplosionSound();
-    addKillFeedEntry(data.killer || '???', data.id.slice(0,6), data.killer === myId);
-    scene.remove(otherPlayers[data.id]);
-    delete otherPlayers[data.id];
-    
-    // If I killed a player, give massive XP
-    if(data.killer === myId) addXP(200);
-  }
-});
-
-socket.on('npcDied', (data) => {
-  if(npcs[data.id]) {
-    createExplosion(npcs[data.id].position);
-    playExplosionSound();
-    const killerName = data.killer?.startsWith('npc_') ? `BOT-${data.killer.slice(4)}` : (data.killer === myId ? 'YOU' : data.killer?.slice(0,6) || '???');
-    addKillFeedEntry(killerName, `BOT-${data.id.slice(4)}`, data.killer === myId);
-    scene.remove(npcs[data.id]);
-    delete npcs[data.id];
-    
-    if(data.killer === myId) {
-      killCount++;
-      updateKillCounter();
-      addXP(40);
-    }
-  }
-});
-
-socket.on('playerRespawned', (data) => {
-  if(data.id !== myId) addEntity(otherPlayers, data.id, data.state, false);
-});
+// Initial NPCs
+for(let i=0; i<10; i++) spawnLocalNPC();
 
 function addEntity(dict: any, id: string, state: any, isNPC: boolean) {
   if(dict[id]) scene.remove(dict[id]);
@@ -799,25 +747,10 @@ function addEntity(dict: any, id: string, state: any, isNPC: boolean) {
   scene.add(ship);
   dict[id] = ship;
 }
-
-function updateEntity(dict: any, id: string, state: any) {
-  if(dict[id]) {
-    dict[id].userData.targetPosition.set(state.x, state.y, state.z);
-    if(state.qx !== undefined) {
-      dict[id].userData.targetQuaternion.set(state.qx, state.qy, state.qz, state.qw);
-    } else {
-      // NPC simple lookAt calculation to target
-      const targetVec = new THREE.Vector3(state.x, state.y, state.z);
-      if (targetVec.distanceTo(dict[id].position) > 0.1) {
-        const m = new THREE.Matrix4().lookAt(dict[id].position, targetVec, new THREE.Vector3(0,1,0));
-        dict[id].userData.targetQuaternion.setFromRotationMatrix(m);
-      }
-    }
-  }
-}
+// updateEntity removed
 
 // ---- Visual Effects ----
-const lasers: {mesh: THREE.Mesh, dir: THREE.Vector3, life: number, speed: number}[] = [];
+const lasers: {mesh: THREE.Mesh, dir: THREE.Vector3, life: number, speed: number, color: number}[] = [];
 function createLaser(pos: THREE.Vector3, dir: THREE.Vector3, color: number, speed: number) {
   const geo = new THREE.CylinderGeometry(0.2, 0.2, 10);
   geo.rotateX(Math.PI/2);
@@ -826,7 +759,7 @@ function createLaser(pos: THREE.Vector3, dir: THREE.Vector3, color: number, spee
   mesh.position.copy(pos);
   mesh.lookAt(pos.clone().add(dir));
   scene.add(mesh);
-  lasers.push({ mesh, dir: dir.normalize(), life: 2.0, speed });
+  lasers.push({ mesh, dir: dir.normalize(), life: 2.0, speed, color });
 }
 
 function createExplosion(pos: THREE.Vector3) {
@@ -962,11 +895,10 @@ function shoot() {
   
   createLaser(spawnPos, dir, wep.color, wep.speed);
   playLaserSound(currentWeapon);
-  socket.emit('shoot', { dirX: dir.x, dirY: dir.y, dirZ: dir.z, posX: spawnPos.x, posY: spawnPos.y, posZ: spawnPos.z, color: wep.color });
   
-  // Hitscan for instant weapons, but we will use raycaster for all to make it easier to hit
+  // Hitscan for instant weapons
   const raycaster = new THREE.Raycaster(camera.position, dir);
-  const targets = [...Object.values(otherPlayers), ...Object.values(npcs)];
+  const targets = [...Object.values(npcs)];
   const intersects = raycaster.intersectObjects(targets, true);
   
   if(intersects.length > 0) {
@@ -975,17 +907,26 @@ function shoot() {
     setTimeout(() => UI.hitMarker.classList.remove('hit'), 100);
     
     const hitObj = intersects[0].object;
-    let targetId = null;
+    let targetId: string | null = null;
     
-    for(let id in otherPlayers) {
-      if(hitObj.parent === otherPlayers[id] || hitObj.parent?.parent === otherPlayers[id]) targetId = id;
-    }
     for(let id in npcs) {
       if(hitObj.parent === npcs[id] || hitObj.parent?.parent === npcs[id]) targetId = id;
     }
     
-    if(targetId) {
-      socket.emit('hitTarget', { targetId, damage: wep.damage * dmgMult });
+    if(targetId && npcs[targetId]) {
+      const npc = npcs[targetId];
+      npc.userData.health -= wep.damage * dmgMult;
+      
+      if(npc.userData.health <= 0) {
+        createExplosion(npc.position);
+        playExplosionSound();
+        addKillFeedEntry('YOU', `BOT-${targetId.slice(4)}`, true);
+        scene.remove(npc);
+        delete npcs[targetId];
+        killCount++;
+        updateKillCounter();
+        addXP(40);
+      }
     }
   }
 }
@@ -1012,7 +953,7 @@ function triggerLevelUp() {
 
 function applyUpgrade(type: string) {
   if(type === 'dmg') dmgMult += 0.2;
-  if(type === 'hp') { maxHealth += 50; health = maxHealth; socket.emit('updateMaxHealth', maxHealth); }
+  if(type === 'hp') { maxHealth += 50; health = maxHealth; }
   if(type === 'fire') fireRateMult += 0.2;
   
   UI.upgradeMenu.classList.add('hidden');
@@ -1041,7 +982,6 @@ function updateHealthUI() {
 
 // ---- Game Loop ----
 const clock = new THREE.Clock();
-let syncTimer = 0;
 
 function update() {
   requestAnimationFrame(update);
@@ -1061,11 +1001,37 @@ function update() {
     p.quaternion.slerp(p.userData.targetQuaternion, dt * 15);
   }
   
-  // Interpolate NPCs
+  // Local NPC Logic
+  npcSpawnTimer += dt;
+  if(npcSpawnTimer > 3) {
+    if(Object.keys(npcs).length < 25) spawnLocalNPC();
+    npcSpawnTimer = 0;
+  }
+  
   for (let id in npcs) {
     const npc = npcs[id];
-    npc.position.lerp(npc.userData.targetPosition, dt * 10);
-    npc.quaternion.slerp(npc.userData.targetQuaternion, dt * 10);
+    const dist = npc.position.distanceTo(camera.position);
+    
+    // Simple flocking / chasing player
+    const dirToPlayer = camera.position.clone().sub(npc.position).normalize();
+    npc.userData.targetPosition.add(dirToPlayer.multiplyScalar(npc.userData.speed * dt));
+    
+    // Avoid player if too close
+    if(dist < 50) {
+      npc.userData.targetPosition.add(new THREE.Vector3((Math.random()-0.5)*20, (Math.random()-0.5)*20, (Math.random()-0.5)*20).multiplyScalar(dt * 10));
+    }
+    
+    // Shoot at player
+    if(dist < 150 && Math.random() < 0.01) {
+      const shootDir = dirToPlayer.clone().add(new THREE.Vector3((Math.random()-0.5)*0.2, (Math.random()-0.5)*0.2, (Math.random()-0.5)*0.2)).normalize();
+      createLaser(npc.position.clone().add(shootDir.multiplyScalar(3)), shootDir, 0xff0000, 400);
+      playEnemyLaserSound();
+    }
+    
+    npc.position.lerp(npc.userData.targetPosition, dt * 5);
+    
+    const m = new THREE.Matrix4().lookAt(npc.position, npc.userData.targetPosition, new THREE.Vector3(0,1,0));
+    npc.quaternion.slerp(new THREE.Quaternion().setFromRotationMatrix(m), dt * 5);
   }
   
   for(let i=lasers.length-1; i>=0; i--) {
@@ -1102,15 +1068,28 @@ function update() {
     if(keys.a) camera.translateX(-30 * dt);
     if(keys.d) camera.translateX(30 * dt);
     
+    // Portal Logic
+    for (let i = 0; i < portals.length; i++) {
+      const p = portals[i];
+      p.rotation.y += dt * 0.5;
+      if (camera.position.distanceTo(p.position) < 18) {
+        playPortalSound();
+        addXP(20);
+        throttle = Math.min(MAX_SPEED * 1.5, throttle + 150); // Speed boost
+        p.position.set(camera.position.x + (Math.random()-0.5)*800, camera.position.y + (Math.random()-0.5)*400, camera.position.z - 300 - Math.random()*500);
+        p.lookAt(camera.position);
+      }
+    }
+    
     // Engine sound update
     updateEngineSound(thrustPct);
     
-    // Speed lines intensity based on throttle
-    speedLinesMat.opacity = thrustPct * 0.6;
-    speedLinesMat.size = 0.3 + thrustPct * 1.5;
+    // Speed lines intensity based on throttle (reduced for better visibility)
+    speedLinesMat.opacity = thrustPct * 0.25;
+    speedLinesMat.size = 0.2 + thrustPct * 0.8;
     const slArr = speedLines.geometry.attributes.position.array as Float32Array;
     for (let i = 0; i < speedLinesCount; i++) {
-      slArr[i * 3 + 2] += thrustPct * 3;
+      slArr[i * 3 + 2] += thrustPct * 1.5;
       if (slArr[i * 3 + 2] > 5) slArr[i * 3 + 2] = -80;
     }
     speedLines.geometry.attributes.position.needsUpdate = true;
@@ -1124,13 +1103,23 @@ function update() {
       cameraShakeIntensity = 0;
     }
     
-    syncTimer += dt;
-    if(syncTimer > 0.05) {
-      syncTimer = 0;
-      socket.emit('updateState', {
-        x: camera.position.x, y: camera.position.y, z: camera.position.z,
-        qx: camera.quaternion.x, qy: camera.quaternion.y, qz: camera.quaternion.z, qw: camera.quaternion.w
-      });
+    // Player hit by laser check locally
+    const playerBox = new THREE.Box3().setFromCenterAndSize(camera.position, new THREE.Vector3(2, 2, 2));
+    for(let i=0; i<lasers.length; i++) {
+      if(lasers[i].color === 0xff0000 && playerBox.containsPoint(lasers[i].mesh.position)) {
+         health -= 10;
+         updateHealthUI();
+         playDamageSound();
+         cameraShakeIntensity = Math.max(cameraShakeIntensity, 0.03);
+         document.body.style.backgroundColor = '#ff0000';
+         setTimeout(() => document.body.style.backgroundColor = '#000', 100);
+         lasers[i].life = 0; // Destroy laser
+         
+         if(health <= 0 && !isDead) {
+           playDeathSound();
+           die();
+         }
+      }
     }
   }
   renderer.render(scene, camera);
@@ -1141,7 +1130,6 @@ function startGame() {
   document.body.requestPointerLock();
   isPlaying = true;
   isDead = false;
-  socket.emit('startGame');
   UI.startMenu.classList.add('hidden');
   UI.gameOverMenu.classList.add('hidden');
   UI.hud.classList.remove('hidden');
@@ -1159,7 +1147,6 @@ function die() {
 
 UI.startBtn.addEventListener('click', startGame);
 UI.respawnBtn.addEventListener('click', () => {
-  socket.emit('respawn');
   camera.position.set((Math.random()-0.5)*50, (Math.random()-0.5)*50, (Math.random()-0.5)*50);
   pitch = 0; yaw = 0; roll = 0; throttle = 0;
   level = 1; xp = 0; xpNeeded = 100; maxHealth = 100; health = 100; dmgMult = 1.0; fireRateMult = 1.0;
