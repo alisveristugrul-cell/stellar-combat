@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Stellar Combat - RPG</title>
+    <script async src="https://vibej.am/2026/widget.js"></script>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+      
+      body { margin: 0; padding: 0; overflow: hidden; background: #000; font-family: 'Share Tech Mono', monospace; user-select: none; }
+      canvas { display: block; }
+      
+      #ui-layer {
+        position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 10;
+      }
+      
+      .panel {
+        position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        background: rgba(10, 20, 30, 0.95); border: 1px solid #00ffcc;
+        box-shadow: 0 0 20px rgba(0, 255, 204, 0.6);
+        padding: 40px; border-radius: 8px; text-align: center;
+        pointer-events: auto; z-index: 50; color: #fff;
+      }
+      
+      .hidden { display: none !important; pointer-events: none !important; }
+      
+      h1 { color: #00ffcc; text-shadow: 0 0 10px #00ffcc; font-size: 36px; margin-top: 0; }
+      p { color: #88ccff; }
+      
+      button {
+        background: rgba(0, 255, 204, 0.1); color: #00ffcc; border: 1px solid #00ffcc;
+        padding: 12px 30px; font-size: 20px; font-family: inherit; cursor: pointer;
+        transition: all 0.2s; margin: 10px; border-radius: 4px;
+      }
+      button:hover { background: #00ffcc; color: #000; box-shadow: 0 0 15px #00ffcc; }
+      
+      /* HUD */
+      #hud { position: absolute; width: 100%; height: 100%; top: 0; left: 0; pointer-events: none; }
+      
+      #crosshair {
+        position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        width: 30px; height: 30px; border: 2px solid rgba(0, 255, 204, 0.6); border-radius: 50%;
+        transition: transform 0.2s;
+      }
+      #crosshair.zoomed { transform: translate(-50%, -50%) scale(0.6); border-color: #ffaa00; }
+      #crosshair::after {
+        content: ''; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        width: 4px; height: 4px; background: #00ffcc; border-radius: 50%;
+      }
+      
+      #health-container { position: absolute; bottom: 30px; left: 30px; width: 250px; }
+      #health-label { color: #00ffcc; font-size: 18px; margin-bottom: 5px; text-shadow: 0 0 5px #00ffcc; }
+      #health-bar-bg { width: 100%; height: 15px; background: rgba(0,0,0,0.5); border: 1px solid #00ffcc; }
+      #health-bar-fill { width: 100%; height: 100%; background: #00ffcc; transition: width 0.2s; }
+      
+      #xp-container { position: absolute; top: 30px; left: 50%; transform: translateX(-50%); width: 400px; text-align: center; }
+      #level-label { color: #ffaa00; font-size: 24px; font-weight: bold; text-shadow: 0 0 10px #ffaa00; margin-bottom: 5px; }
+      #xp-bar-bg { width: 100%; height: 10px; background: rgba(0,0,0,0.5); border: 1px solid #ffaa00; }
+      #xp-bar-fill { width: 0%; height: 100%; background: #ffaa00; transition: width 0.3s; }
+      
+      #speed-display { position: absolute; bottom: 30px; right: 30px; color: #00ffcc; font-size: 24px; text-shadow: 0 0 5px #00ffcc; }
+      
+      #weapons-container { position: absolute; right: 30px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 10px; }
+      .weapon-slot { width: 60px; height: 60px; border: 2px solid #555; display: flex; align-items: center; justify-content: center; font-size: 24px; color: #555; background: rgba(0,0,0,0.5); }
+      .weapon-slot.active { border-color: #00ffcc; color: #00ffcc; box-shadow: 0 0 10px #00ffcc; }
+      
+      #hit-marker {
+        position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        width: 40px; height: 40px; border: 2px solid transparent; border-radius: 50%; transition: border-color 0.1s;
+      }
+      .hit { border-color: #ff0000 !important; }
+      
+      /* ---- COCKPIT OVERLAY ---- */
+      #cockpit-frame {
+        position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+        pointer-events: none; z-index: 5;
+      }
+      /* Top Frame Bar */
+      #cockpit-frame .top-bar {
+        position: absolute; top: 0; left: 0; width: 100%; height: 40px;
+        background: linear-gradient(180deg, rgba(8,12,18,0.5) 0%, rgba(8,12,18,0.2) 60%, transparent 100%);
+        border-bottom: 1px solid rgba(0,255,204,0.1);
+      }
+      /* Bottom Dashboard */
+      #cockpit-frame .bottom-dash {
+        position: absolute; bottom: 0; left: 0; width: 100%; height: 120px;
+        background: linear-gradient(0deg, rgba(8,12,18,0.6) 0%, rgba(8,12,18,0.3) 50%, transparent 100%);
+        border-top: 1px solid rgba(0,255,204,0.08);
+      }
+      #cockpit-frame .bottom-dash::before {
+        content: ''; position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+        width: 300px; height: 2px;
+        background: linear-gradient(90deg, transparent, rgba(0,255,204,0.3), transparent);
+      }
+      /* Side Pillars */
+      #cockpit-frame .pillar-left,
+      #cockpit-frame .pillar-right {
+        position: absolute; top: 0; width: 80px; height: 100%;
+      }
+      #cockpit-frame .pillar-left {
+        left: 0;
+        background: linear-gradient(90deg, rgba(8,12,18,0.5) 0%, rgba(8,12,18,0.15) 40%, transparent 100%);
+        border-right: 1px solid rgba(0,255,204,0.05);
+      }
+      #cockpit-frame .pillar-right {
+        right: 0;
+        background: linear-gradient(270deg, rgba(8,12,18,0.5) 0%, rgba(8,12,18,0.15) 40%, transparent 100%);
+        border-left: 1px solid rgba(0,255,204,0.05);
+      }
+      /* Diagonal Struts */
+      #cockpit-frame .strut-tl,
+      #cockpit-frame .strut-tr,
+      #cockpit-frame .strut-bl,
+      #cockpit-frame .strut-br {
+        position: absolute; width: 200px; height: 4px;
+        background: linear-gradient(90deg, rgba(20,25,35,0.95), rgba(20,25,35,0.3));
+        box-shadow: 0 1px 0 rgba(0,255,204,0.1);
+      }
+      #cockpit-frame .strut-tl { top: 55px; left: 40px; transform: rotate(25deg); transform-origin: left; }
+      #cockpit-frame .strut-tr { top: 55px; right: 40px; transform: rotate(-25deg); transform-origin: right; background: linear-gradient(270deg, rgba(20,25,35,0.95), rgba(20,25,35,0.3)); }
+      #cockpit-frame .strut-bl { bottom: 175px; left: 40px; transform: rotate(-20deg); transform-origin: left; }
+      #cockpit-frame .strut-br { bottom: 175px; right: 40px; transform: rotate(20deg); transform-origin: right; background: linear-gradient(270deg, rgba(20,25,35,0.95), rgba(20,25,35,0.3)); }
+
+      /* Corner brackets */
+      #cockpit-frame .corner {
+        position: absolute; width: 120px; height: 120px;
+      }
+      #cockpit-frame .corner-tl { top: 0; left: 0; border-right: 1px solid rgba(0,255,204,0.04); border-bottom: 1px solid rgba(0,255,204,0.04); background: radial-gradient(ellipse at top left, rgba(8,12,18,0.4) 0%, transparent 60%); }
+      #cockpit-frame .corner-tr { top: 0; right: 0; border-left: 1px solid rgba(0,255,204,0.04); border-bottom: 1px solid rgba(0,255,204,0.04); background: radial-gradient(ellipse at top right, rgba(8,12,18,0.4) 0%, transparent 60%); }
+      #cockpit-frame .corner-bl { bottom: 0; left: 0; border-right: 1px solid rgba(0,255,204,0.04); border-top: 1px solid rgba(0,255,204,0.04); background: radial-gradient(ellipse at bottom left, rgba(8,12,18,0.4) 0%, transparent 60%); }
+      #cockpit-frame .corner-br { bottom: 0; right: 0; border-left: 1px solid rgba(0,255,204,0.04); border-top: 1px solid rgba(0,255,204,0.04); background: radial-gradient(ellipse at bottom right, rgba(8,12,18,0.4) 0%, transparent 60%); }
+
+      /* Instrument Lights */
+      .inst-light {
+        position: absolute; width: 6px; height: 6px; border-radius: 50%;
+        animation: blink 2s infinite alternate;
+      }
+      .inst-light.green { background: #00ff88; box-shadow: 0 0 6px #00ff88; }
+      .inst-light.amber { background: #ffaa00; box-shadow: 0 0 6px #ffaa00; }
+      .inst-light.red { background: #ff3333; box-shadow: 0 0 6px #ff3333; animation-duration: 0.8s; }
+      .inst-light.cyan { background: #00ffcc; box-shadow: 0 0 6px #00ffcc; }
+
+      @keyframes blink {
+        0% { opacity: 0.4; }
+        100% { opacity: 1; }
+      }
+
+      /* Mini Radar in bottom-dash */
+      #mini-radar {
+        position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+        width: 100px; height: 100px; border-radius: 50%;
+        border: 1px solid rgba(0,255,204,0.25);
+        background: radial-gradient(circle, rgba(0,255,204,0.05) 0%, transparent 70%);
+        overflow: hidden;
+      }
+      #mini-radar::before {
+        content: ''; position: absolute; top: 50%; left: 50%;
+        width: 50px; height: 1px; background: rgba(0,255,204,0.4);
+        transform-origin: left center;
+        animation: radarSweep 3s linear infinite;
+      }
+      #mini-radar::after {
+        content: ''; position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+        width: 4px; height: 4px; border-radius: 50%; background: #00ffcc;
+        box-shadow: 0 0 4px #00ffcc;
+      }
+      #mini-radar .radar-ring {
+        position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+        border-radius: 50%; border: 1px solid rgba(0,255,204,0.1);
+      }
+      .radar-ring.r1 { width: 33px; height: 33px; }
+      .radar-ring.r2 { width: 66px; height: 66px; }
+
+      @keyframes radarSweep {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+
+      /* Vibe Jam Badge */
+      #vibe-badge {
+        position: absolute; bottom: 8px; right: 15px; font-size: 11px;
+        color: rgba(255,100,100,0.7); letter-spacing: 1px;
+      }
+      #vibe-badge::before { content: '🔴 '; font-size: 8px; }
+
+      /* Kill Feed */
+      #kill-feed {
+        position: absolute; top: 80px; right: 20px;
+        display: flex; flex-direction: column; gap: 4px;
+        pointer-events: none; z-index: 20;
+      }
+      .kill-entry {
+        font-size: 12px; color: #aaa; padding: 3px 8px;
+        background: rgba(0,0,0,0.5); border-left: 2px solid #ff4444;
+        animation: killFade 4s forwards; white-space: nowrap;
+      }
+      .kill-entry .killer { color: #ff6666; }
+      .kill-entry .victim { color: #66aaff; }
+      .kill-entry.player-kill { border-left-color: #00ffcc; }
+      .kill-entry.player-kill .killer { color: #00ffcc; }
+      @keyframes killFade {
+        0% { opacity: 1; transform: translateX(0); }
+        70% { opacity: 1; }
+        100% { opacity: 0; transform: translateX(20px); }
+      }
+
+      /* Kill Counter */
+      #kill-counter {
+        position: absolute; top: 70px; left: 30px;
+        color: #ff6666; font-size: 16px; text-shadow: 0 0 5px #ff0000;
+      }
+
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <!-- COCKPIT FRAME OVERLAY -->
+    <div id="cockpit-frame">
+      <div class="top-bar"></div>
+      <div class="bottom-dash"></div>
+      <div class="pillar-left"></div>
+      <div class="pillar-right"></div>
+      <div class="strut-tl"></div>
+      <div class="strut-tr"></div>
+      <div class="strut-bl"></div>
+      <div class="strut-br"></div>
+      <div class="corner corner-tl"></div>
+      <div class="corner corner-tr"></div>
+      <div class="corner corner-bl"></div>
+      <div class="corner corner-br"></div>
+      <!-- Instrument Lights -->
+      <span class="inst-light green" style="bottom:155px; left:120px;"></span>
+      <span class="inst-light green" style="bottom:150px; left:140px;"></span>
+      <span class="inst-light amber" style="bottom:160px; left:160px;"></span>
+      <span class="inst-light cyan" style="bottom:155px; right:120px;"></span>
+      <span class="inst-light green" style="bottom:150px; right:140px;"></span>
+      <span class="inst-light amber" style="bottom:160px; right:160px;"></span>
+      <span class="inst-light red" style="top:45px; left:100px;"></span>
+      <span class="inst-light cyan" style="top:45px; right:100px;"></span>
+      <!-- Mini Radar -->
+      <div id="mini-radar">
+        <div class="radar-ring r1"></div>
+        <div class="radar-ring r2"></div>
+      </div>
+      <div id="vibe-badge">Vibe Jam 2026</div>
+    </div>
+
+    <div id="ui-layer">
+      
+      <div id="start-menu" class="panel">
+        <h1>STELLAR RPG</h1>
+        <p>Vibe Jam 2026 - Level up up to 50!</p>
+        <p>Hold Left Click: Auto-Fire | Hold Right Click: Zoom</p>
+        <p>1, 2, 3 or Scroll: Switch Weapons</p>
+        <button id="start-btn">ENTER COCKPIT</button>
+      </div>
+
+      <div id="hud" class="hidden">
+        <div id="crosshair"></div>
+        <div id="hit-marker"></div>
+        
+        <div id="xp-container">
+          <div id="level-label">LEVEL 1</div>
+          <div id="xp-bar-bg"><div id="xp-bar-fill"></div></div>
+        </div>
+
+        <div id="weapons-container">
+          <div id="wep-1" class="weapon-slot active">1</div>
+          <div id="wep-2" class="weapon-slot">2</div>
+          <div id="wep-3" class="weapon-slot">3</div>
+        </div>
+
+        <div id="health-container">
+          <div id="health-label">HULL: 100/100</div>
+          <div id="health-bar-bg"><div id="health-bar-fill"></div></div>
+        </div>
+        
+        <div id="speed-display">THRUST: 0%</div>
+        <div id="kill-feed"></div>
+        <div id="kill-counter">KILLS: 0</div>
+      </div>
+
+      <div id="upgrade-menu" class="panel hidden">
+        <h1 style="color: #ffaa00;">LEVEL UP!</h1>
+        <p>Choose an upgrade to enhance your ship:</p>
+        <div style="display: flex; gap: 10px; justify-content: center; margin-top: 20px;">
+          <button id="upg-damage">+ DMG<br><small>Weapons hit harder</small></button>
+          <button id="upg-health">+ HULL<br><small>Increase Max Health</small></button>
+          <button id="upg-firerate">+ FIRE RATE<br><small>Shoot faster</small></button>
+        </div>
+      </div>
+
+      <div id="game-over-menu" class="panel hidden">
+        <h1 style="color: #ff3333;">SHIP DESTROYED</h1>
+        <p id="final-stats">You reached Level X</p>
+        <button id="respawn-btn" style="border-color: #ff3333; color: #ff3333;">RESPAWN</button>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
